@@ -13,27 +13,29 @@ namespace R16P
         static void Main(string[] args)
         {
             string rYear = ConfigurationManager.AppSettings.Get("YEAR");
-            for (int i = 1; i<=1; i++)
+            for(int i = 10; i <= 10; i++)
             {
                 FormR16P(rYear, i);
             }
             Console.WriteLine("Готово!");
-            
+
 
         }
 
         public static void FormR16P(string year, int month)
         {
-            DateTime date = new DateTime();
+            DateTime bookPeriod = new DateTime();
+            DateTime payDate = new DateTime();
+            DateTime inpDate = new DateTime();
             DateTime sp = new DateTime();
             Decimal val = new Decimal();
-            date = Convert.ToDateTime("01."+month+"."+year);
+            bookPeriod = Convert.ToDateTime("01."+month+"."+year);
             
             
             
             string reestrName = "R16P";
             string fileName = @ConfigurationManager.AppSettings.Get("CSV_PATH");
-            fileName += reestrName + "_" + date.ToString("MMyyyy") + ".csv";
+            fileName += reestrName + "_" + bookPeriod.ToString("MMyyyy") + ".csv";
 
 
             //Задаем формат чисел
@@ -47,24 +49,40 @@ namespace R16P
             csbuilder["Server"] = @ConfigurationManager.AppSettings.Get("MSSQL_Server");
             csbuilder["UID"] = @ConfigurationManager.AppSettings.Get("UID");
             csbuilder["Password"] = @ConfigurationManager.AppSettings.Get("Password");
-            //csbuilder["Connect Timeout"] = 20000;
+            csbuilder["Connect Timeout"] = 0;
             csbuilder["integrated Security"] = true; //для коннекта с локальным экземпляром
 
             //Текст запроса к БД
             string reestrQuery;
 
-            reestrQuery = $@"SELECT [ID]
-                ,[DATE_INP]
-                ,[VAL]
-                ,[REMARK]
-                ,[REESTR]
-                ,(select distinct nomer from [ORACLE].[dbo].[FLS] where ID = FLS)[FLS]
-                ,[PERIOD]
-                ,[PAY_DATE]
-                ,[IS_LOCKED]
-                ,(SELECT DISTINCT [SERV_PERIOD] FROM [ORACLE].[dbo].[DOC_PAY_ITEM] WHERE [DOC_PAY] = [DOC_PAY].[ID]) AS SERV_PERIOD
-                FROM [ORACLE].[dbo].[DOC_PAY]
-                where DATE_INP >= '{date}' and DATE_INP < '{date.AddMonths(1)}' and VAL >= 0";
+            reestrQuery = $@"
+                    SET DATEFORMAT DMY
+                    SELECT [DOC_PAY],
+                    [BOOK_PERIOD],
+                    (select distinct nomer from [ORACLE].[dbo].[FLS] where ID = DPI.FLS)[FLS],
+                    DP.ID [ID],
+                    DP.DATE_INP [DATE_INP],
+                    DP.REMARK [REMARK],
+                    DP.PAY_DATE [PAY_DATE],
+                    DPI.VAL [VAL],
+                    DP.PERIOD [PERIOD]
+                    FROM [ORACLE].[dbo].[DOC_PAY_ITEM] as DPI
+                    LEFT JOIN [ORACLE].[dbo].[DOC_PAY] DP on DP.ID = DPI.DOC_PAY
+                    where BOOK_PERIOD BETWEEN '{bookPeriod.ToString("dd.MM.yyyy")}' and '{LastDayOfMonth(bookPeriod).ToString("dd.MM.yyyy")}'";
+
+            Console.WriteLine(reestrQuery);
+            //reestrQuery = $@"SELECT [ID]
+            //    ,[DATE_INP]
+            //    ,[VAL]
+            //    ,[REMARK]
+            //    ,[REESTR]
+            //    ,(select distinct nomer from [ORACLE].[dbo].[FLS] where ID = FLS)[FLS]
+            //    ,[PERIOD]
+            //    ,[PAY_DATE]
+            //    ,[IS_LOCKED]
+            //    ,(SELECT DISTINCT [book_PERIOD] FROM [ORACLE].[dbo].[DOC_PAY_ITEM] WHERE [DOC_PAY] = [DOC_PAY].[ID]) AS SERV_PERIOD
+            //    FROM [ORACLE].[dbo].[DOC_PAY]
+            //    where DATE_INP >= '{payDate}' and DATE_INP < '{payDate.AddMonths(1)}' and VAL >= 0";
 
             //reestrQuery = $@"SELECT [ID]
             //    ,[DATE_INP]
@@ -76,7 +94,7 @@ namespace R16P
             //    ,[PAY_DATE]
             //    ,[IS_LOCKED]
             //    FROM [ORACLE].[dbo].[DOC_PAY]
-            //    where 'ID' in (SELECT 'ID' FROM [ORACLE].[dbo].[DOC_PAY] where DATE_INP >= '{date}' and DATE_INP < '{date.AddMonths(1)}' and VAL >=0)";
+            //    where 'ID' in (SELECT 'ID' FROM [ORACLE].[dbo].[DOC_PAY] where DATE_INP >= '{payDate}' and DATE_INP < '{payDate.AddMonths(1)}' and VAL >=0)";
             DataTable reestr = new DataTable();
             DataColumn column;
             DataRow reestrRow;
@@ -168,8 +186,9 @@ namespace R16P
                 {
                     conn.Open();
                     SqlCommand cmd = new SqlCommand(reestrQuery, conn);
+                    cmd.CommandTimeout = 600;
                     SqlDataAdapter da = new SqlDataAdapter(cmd);
-                    da.Fill(qr);
+                    da.Fill(qr);                                       
                     conn.Close();
                 }
 
@@ -177,30 +196,44 @@ namespace R16P
                 Console.WriteLine("Получаем данные");
                 foreach(DataRow row in qr.Rows)
                 {
-                    sp = Convert.ToDateTime(row["SERV_PERIOD"]);
-                    date = Convert.ToDateTime(row["PAY_DATE"]);
-                    //if ()
+                    //if(!Convert.IsDBNull(row["SERV_PERIOD"]))
+                    //{
+                        //sp = Convert.ToDateTime(row["SERV_PERIOD"]);
+                        payDate = Convert.ToDateTime(row["PAY_DATE"]);
+                        inpDate = Convert.ToDateTime(row["DATE_INP"]);
                     
-                    reestrRow = reestr.NewRow();
+                    //Только поступления
+                    if(Convert.ToDecimal(row["VAL"]) > 0)
+                    {
 
-                    //Номер ЛС
-                    reestrRow["AccountNum"] = Convert.ToString(row["FLS"]);
+                        reestrRow = reestr.NewRow();
 
-                    //Текущие платежи
-                    val = Convert.ToDecimal(row["VAL"]);
-                    reestrRow["PaySum"] = val.ToString(specifier, nfi);
+                        //Номер ЛС
+                        reestrRow["AccountNum"] = Convert.ToString(row["FLS"]);
 
-                    //Дата платежа                    
-                    reestrRow["LastPayDate"] = date.ToString("yyyy-MM-dd");
+                        //Текущие платежи
+                        val = Convert.ToDecimal(row["VAL"]);
+                        reestrRow["PaySum"] = val.ToString(specifier, nfi);
 
-                    //Код платежа
-                    reestrRow["PayID"] = Convert.ToString(row["ID"]);
+                        //Дата платежа                    
+                        reestrRow["LastPayDate"] = payDate.ToString("yyyy-MM-dd");
 
-                    //Комментарии
-                    date = Convert.ToDateTime(row["PERIOD"]);
-                    reestrRow["Comment"] = "За период: " + date.ToString("yyyy-MM-dd") + "," + Convert.ToString(row["REMARK"]);
+                        //Код платежа
+                        reestrRow["PayID"] = Convert.ToString(row["ID"]);
 
-                    reestr.Rows.Add(reestrRow);
+                        //Комментарии
+                        payDate = Convert.ToDateTime(row["PERIOD"]);
+                        reestrRow["Comment"] = "За период: " + payDate.ToString("yyyy-MM-dd") + "," + Convert.ToString(row["REMARK"]);
+
+                        reestr.Rows.Add(reestrRow);
+                    }
+                        //}
+                    //}
+                    //else
+                    //{
+                    //    Console.WriteLine(Convert.ToString(row["FLS"]) + " " + Convert.ToString(row["VAL"]) +" "+  Convert.ToString(row["ID"]) );
+
+                    //}
                 }
                 ////Проверка полученных значений
                 //foreach(DataRow r in reestr.Rows)
@@ -285,6 +318,19 @@ namespace R16P
                 sw.Write(sw.NewLine);
             }
             sw.Close();
+        }
+        public static DateTime FirstDayOfMonth(DateTime date)
+        {
+            return new DateTime(date.Year, date.Month, 1);
+        }
+
+        public static DateTime LastDayOfMonth(DateTime date)
+        {
+            DateTime d = new DateTime();
+            d = FirstDayOfMonth (date);
+            d = d.AddMonths(1);
+            d = d.AddDays(-1);
+            return d;
         }
 
     }
